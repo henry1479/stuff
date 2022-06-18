@@ -1,0 +1,167 @@
+События и API
+
+Наблюдатель
+Observer
+
+Поведенческий паттерн. Влияет на поведение и управляет им.
+
+Суть заключается в том что есть событийный класс и классы наблюдатели за ним
+Один слушатель может быть завязан на несколько событий.
+В ларавел есть класс Event 
+создание события и слушателя на него
+php artisan make:event UserLastLoginEvent
+php artisan make:listener UserLastListeners
+
+создаем миграцию по добавлению полей в таблицу users
+php artisan make:migration  add_last_login_at_and_avatar_fields_in_user_table --table=users
+
+
+описываем новые поля в миграции
+
+public function up()
+{
+	Schema::table('users', function(Blueprint $table){
+		$table->string('avatar', 255)->after('email')->nullable();
+		$table->timestamp('last_login_add)->nullable;
+	
+	});
+
+}
+
+выполянем миграции
+
+в модели User добоваляем новые поля для обновления
+делаем дату карбон-объектом
+
+protected $dates = [
+	'last_login_at'
+
+];
+
+отключаем created_at и updated_at
+
+public timestamps = false;
+
+
+UserLastLoginEvent нас интересует только конструктор
+public fucntion __construct(User $user)
+{
+	$this->user = user;
+
+}
+
+UserLastLoginListener нас интересует метод handle()
+проверяем, что событие имеет свойство user,
+которое является экзеипляром модели User
+
+public fucntion handle($event)
+{
+	// сюда приходит событие
+	// нет конечного типа
+	if(isset($event->user) && $event->user instanecof User {
+		$event->user->last_login_at = now('Europe/Moscow');
+		$event->user->save();
+	}
+
+}
+
+
+чтобы связать эти два класса 
+открываем EventServiceProvider
+
+protected $listen = [
+	Registered::class => [
+	
+		SendEmailVerificationNotification::class,
+	],
+	UserLastLoginEvent::class => [
+		UserLasrLoginListener::class
+	
+	]
+	
+];
+
+
+LoginController переопределяем метод authenticated
+этот метод сработает, когда пользователь
+авторизуется, и здесь мы можем вызвать 
+наше событие
+
+public function authenticated(Request $request, $user)
+{
+	event(new UserLastLoginEvent($user));
+
+}
+
+xml-парсеры
+xml - формат передачи и хранения данных.
+аналог html
+встроенные расширения для работы с xml
+
+DOM
+SimpleXML
+
+composer require orchestral/parser
+
+
+регистрируем библиотеку
+делать необязательно
+config/app.php
+
+'providers' => [
+	Orchestra\Parser\XmlServiceProvider::class
+
+],
+
+добавляем элиас для парсера
+
+'aliases' => Facade::defaultAliases()->merge([
+	'XmlParser' => Orchestra\Parser\Xml\Facade::class,
+
+])->toArray(),
+
+
+
+создаем для работы контроллер одного действия в админке
+php artisan make: Admin/ParserController --invokable
+
+роут
+Route::get('/parser', AdminParserController::class)->name('parser');
+
+в контроллере
+use Orchestra\Parser\Xml\Facade as XmlParcer;
+
+public function __invoke(Request $request)
+{
+	//парсим яндекс-ленту
+	$xml = XmlParser::load('url.rss');
+	// указываем поля для парсинга
+	$xml->parse([
+		'title' =>[
+			'uses'=> 'channel.title'
+		],
+		'link' => [
+		
+			'uses => 'channel.link'
+		],
+		'description' => [
+			'uses'=>'channel.description'
+		],
+		'image' => [
+			'uses' => 'channel.image.url'
+		],
+		'lastBuildDate' => [
+			'uses' => 'lastBuildDate'
+		],
+		
+		'news' => [
+			'uses' =
+		
+		]
+		
+	]);
+}
+
+
+
+
