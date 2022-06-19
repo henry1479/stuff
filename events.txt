@@ -12,6 +12,9 @@ Observer
 php artisan make:event UserLastLoginEvent
 php artisan make:listener UserLastListeners
 
+можно создавать свои обсерверы
+php artisan make:observer UserObserver --model=User
+
 создаем миграцию по добавлению полей в таблицу users
 php artisan make:migration  add_last_login_at_and_avatar_fields_in_user_table --table=users
 
@@ -35,7 +38,6 @@ public function up()
 
 protected $dates = [
 	'last_login_at'
-
 ];
 
 отключаем created_at и updated_at
@@ -75,7 +77,7 @@ protected $listen = [
 		SendEmailVerificationNotification::class,
 	],
 	UserLastLoginEvent::class => [
-		UserLasrLoginListener::class
+		UserLastLoginListener::class
 	
 	]
 	
@@ -128,40 +130,232 @@ php artisan make: Admin/ParserController --invokable
 роут
 Route::get('/parser', AdminParserController::class)->name('parser');
 
-в контроллере
-use Orchestra\Parser\Xml\Facade as XmlParcer;
 
-public function __invoke(Request $request)
+
+принимаем в качестве парсера вновь созданный сервис
+public function __invoke(Request $request, Parser $parser)
 {
-	//парсим яндекс-ленту
-	$xml = XmlParser::load('url.rss');
-	// указываем поля для парсинга
-	$xml->parse([
-		'title' =>[
-			'uses'=> 'channel.title'
-		],
-		'link' => [
-		
-			'uses => 'channel.link'
-		],
-		'description' => [
-			'uses'=>'channel.description'
-		],
-		'image' => [
-			'uses' => 'channel.image.url'
-		],
-		'lastBuildDate' => [
-			'uses' => 'lastBuildDate'
-		],
-		
-		'news' => [
-			'uses' =
-		
-		]
-		
-	]);
+	
+	$news = $parser->serLink('url)->parse();
+	return $news;
 }
 
 
+создаем дирукторию Http/Services/Contract
+
+создаем новый интерфейс Parser
+
+namespace App\Services\Contract
+
+interface Parser
+{
+
+	public function setLink(string $link): Parser;
+	public function parse():array;
+
+}
+
+и создаем на уровне Services
+в конкретном парсере подключаем 
+use Orchestra\Parser\Xml\Facade as XmlParcer;
+
+namespace App\Services
+
+class ParserService implements Parser
+{
+	protected string $link;
 
 
+	public function setLink(string $link):Parser
+	{
+		$this->link = $link;
+
+		return $this;
+	}
+
+	public function parse():array
+	{
+		//парсим яндекс-ленту
+		$xml = XmlParser::load($this->link);
+		// указываем поля для парсинга
+		$news = $xml->parse([
+			'title' =>[
+				'uses'=> 'channel.title'
+			],
+			'link' => [
+			
+				'uses => 'channel.link'
+			],
+			'description' => [
+				'uses'=>'channel.description'
+			],
+			'image' => [
+				'uses' => 'channel.image.url'
+			],
+			'lastBuildDate' => [
+				'uses' => 'channel.lastBuildDate'
+			],
+			// 
+			'news' => [
+				'uses' ='channel.item[title,link,description,image,lastBuildDate]'
+			
+			]
+			return $news;
+		]);
+
+	}
+}
+
+регистриуем наш новый сервис
+идем в AppServiceProvider
+
+public function register()
+{
+	$this->app->bind(Parser::class, ParserService::class);
+}
+
+
+принимаем в качестве парсера вновь созданный сервис
+public function __invoke(Request $request, Parser $parser)
+{
+	
+	return $parser->setLink('url')->parse();
+	
+}
+
+OAuth 2.0  протокол - это авторизация через соцсеть и другие сервисы
+1 сторона конечный пользователь
+2 сторона - клиент: приложение,  с которым работает пользователь
+3 сторона - сервер
+
+состоит:
+authorization server
+resource server для него нужен access token сгеннерированный в auth server
+access token живет очень недолго
+
+подключаем соцсеть вконтакте
+
+устанавливаем пакет 
+composer require laravel/socialite
+позволяет работать в едином формате через OAuth
+
+устанавливаем пакет для соцсети vk
+composer require  socialiteproviders/vkontakte
+
+добавляем в config/services.php
+
+
+'vkontakte'=> [
+	'client_id'=> env('VKONTAKTE_CLIENT_ID'),
+	'client_secret' => env('VKONTAKTE_CLIENT_SECRET'),
+	'redirect' => env('VKONTAKTE_REDIRECT_URI')	
+]
+
+добавляем в событийный провайдер EventServiceProvider новую связку
+
+protected $listen  = [
+	\SocialiteProviders\Manager\SocialiteWasCalled => [
+
+		\SocialiteProviders\BKontakte\VKontakteExtendsSocialite::class, 'handle',
+	],
+];
+
+
+в новом контроллере SocialController добавляем новые методы
+// формирует редирект на разрешение-ссылку на сервер OAuth
+public function redirect(string $driver)
+{
+	return Socialite::driver($driver)->redirect();
+
+
+}
+ 
+// ответ сервера OAuth
+// принимает также сервис
+// возвращает редирект на соответствующий роут
+public function callback(string $driver, Social $social)
+{	
+	return redirect(
+		$social->loginOrRegisterViaSocialNetwork(
+			Socialite::driver($driver)->user()
+		)
+	); 
+}
+
+
+начинаем все писать на уровне сервера
+
+создаем интерфейс Social в сервисе на уровне контракта
+
+namespace App\Services\Contract
+
+use laravel\Socialite\Contracts\User
+
+interface Social 
+{
+	public function loginOrRegisterViaSocialNetwork(User $socialUser): string;
+
+}
+
+создаем сервис на уровне сервиса
+
+namespace App\Services
+use App\Models\User;
+use laravel\Socialite\Contracts\User as SocialUser
+
+class SocialService implements Social
+{
+	public function loginOrRegisterViaSocialNetwork(socialUser $socialUser): string
+	{
+		// получаем из модели пользователя с такой же почтой, что и в социальной сети
+		$user = User::where('email', $user->getEmail());
+		if($user) {
+			$user->name = $user->getName();
+			$user->avatar = $socialUser->getAvatar();
+			if($user->save()){
+				// авторизуем пользователя
+				Auth::loginUsingId($user->id);
+				// выведем на роут аккаунта
+				return route('account');
+			} else {
+				//регистрируем пользователя
+				// домашнее задание
+				return route('register');
+			}
+
+		}
+
+		throw new ModelNotFoundException('Model not found');
+	}
+}
+
+регистрируем в сервис-провайдере
+
+$this->app->bind(Social::class, SocialService::class);
+
+создаем роуты только для гостей
+
+Route::group(['middleware'=>'guest'], function (){
+	Route::get('/auth/{driver}/redirect', [\App\Http\Controllers\SocialController::class, 'redirect'])
+	->where('driver','\w+')
+	->name('social.redirect');
+	Route::any('/auth/{driver}/callback', [SocialController::class,'callback'])
+	->where('driver','\w+')
+	->name('social.callback');
+})
+
+
+добавляем в login.blade.php ссылку на соответсвующий роут редиректа
+
+<a href="{{ route(social.redirect, ['driver'=>'vkontakte']) }}">вход через ВК </a>
+
+добавляем в .env
+
+VKONTAKTE_CLIENT_ID = забиватеся из самой социальной сети
+VKONTAKTE_CLIENT_SECRET = это тоже
+VKONTAKTE_REDIRECT_URI = http://localhost8000:/auth/vkontakte/callback
+
+нужно зарегистрировать приложение  на vk.dev
+
+после идем в натстройки и там берем id и зашифрованный ключ через звонки и смс
+также вводим доверенный VKONTAKTE_REDIRECT_URI
